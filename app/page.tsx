@@ -1,58 +1,87 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Header } from "@/components/Header";
 import { UploadZone } from "@/components/UploadZone";
 import { GenerateButton } from "@/components/GenerateButton";
 import { ResultDisplay } from "@/components/ResultDisplay";
 
-/**
- * 智能换装网页 - 主页面
- * 流程：上传人像 → 上传服装 → 点击生成 → 查看结果
- */
+type Stage = "idle" | "queued" | "processing" | "done" | "error";
+
+const TIMEOUT_MS = 30_000;
+
 export default function Home() {
-  // 状态管理
-  const [personImage, setPersonImage] = useState<string | null>(null);
-  const [clothingImage, setClothingImage] = useState<string | null>(null);
+  const [personImage, setPersonImage] = useState<{ file: File; preview: string } | null>(null);
+  const [clothingImage, setClothingImage] = useState<{ file: File; preview: string } | null>(null);
   const [resultImage, setResultImage] = useState<string | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
 
-  // 判断是否可生成：两张图都已上传
-  const isReady = !!personImage && !!clothingImage;
+  const abortRef = useRef<AbortController | null>(null);
+  const timedOutRef = useRef(false);
 
-  /**
-   * 处理生成换装效果
-   * v0.1: 模拟生成，v0.2 替换为真实 API 调用
-   */
+  const isReady = !!personImage && !!clothingImage;
+  const isGenerating = stage === "queued" || stage === "processing";
+
   const handleGenerate = async () => {
     if (!isReady) return;
 
-    setIsGenerating(true);
+    // 取消上一次未完成的请求
+    abortRef.current?.abort();
+    timedOutRef.current = false;
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setStage("queued");
     setError(null);
+    setResultImage(null);
+
+    const timeoutId = setTimeout(() => {
+      timedOutRef.current = true;
+      controller.abort();
+    }, TIMEOUT_MS);
 
     try {
-      // TODO: v0.2 替换为真实的 AI 换装 API 调用
-      // const response = await fetch('/api/tryon', { ... });
-      // const data = await response.json();
-      // setResultImage(data.imageUrl);
+      const personBase64 = personImage.preview.split(",")[1];
+      const clothingBase64 = clothingImage.preview.split(",")[1];
 
-      // v0.1 模拟生成延迟
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      setStage("processing");
 
-      // 模拟结果（实际项目中替换为真实图片 URL）
-      setResultImage("/demo-result.png");
+      const response = await fetch("/api/tryon", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ personImage: personBase64, clothingImage: clothingBase64 }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+      const data = await response.json();
+
+      if (!response.ok || data.error) throw new Error(data.error || "生成失败");
+
+      setResultImage(data.resultImage);
+      setStage("done");
     } catch (err) {
-      setError("生成失败，请重试");
-      console.error(err);
-    } finally {
-      setIsGenerating(false);
+      clearTimeout(timeoutId);
+      if (err instanceof Error && err.name === "AbortError") {
+        if (timedOutRef.current) {
+          setError("生成超时（超过 30 秒），请重试");
+          setStage("error");
+        }
+        // 用户主动取消时 stage 已由 handleCancel 重置
+      } else {
+        setError(err instanceof Error ? err.message : "生成失败，请重试");
+        setStage("error");
+      }
     }
   };
 
-  /**
-   * 下载生成结果
-   */
+  const handleCancel = () => {
+    abortRef.current?.abort();
+    setStage("idle");
+    setError(null);
+  };
+
   const handleDownload = () => {
     if (!resultImage) return;
     const link = document.createElement("a");
@@ -63,49 +92,76 @@ export default function Home() {
     document.body.removeChild(link);
   };
 
+  const handleReset = () => {
+    setResultImage(null);
+    setStage("idle");
+    setError(null);
+  };
+
+  const getButtonLabel = () => {
+    switch (stage) {
+      case "queued":
+        return "⏳ 排队中...";
+      case "processing":
+        return "🔄 处理中...";
+      default:
+        return "🎨 生成换装效果";
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white flex flex-col">
       <Header />
 
       <main className="flex-1 max-w-5xl mx-auto px-4 py-8 w-full">
-        {/* 上传区 - 桌面端双栏，移动端单栏 */}
+        {/* 上传区 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           <UploadZone
             type="person"
             label="上传人物照片"
             icon="📷"
-            imagePreview={personImage}
+            imagePreview={personImage?.preview || null}
             onUpload={(file) => {
               const reader = new FileReader();
-              reader.onload = (e) =>
-                setPersonImage(e.target?.result as string);
+              reader.onload = (e) => {
+                setPersonImage({ file, preview: e.target?.result as string });
+              };
               reader.readAsDataURL(file);
             }}
-            onRemove={() => setPersonImage(null)}
+            onRemove={() => {
+              setPersonImage(null);
+              handleReset();
+            }}
           />
           <UploadZone
             type="clothing"
             label="上传服装照片"
             icon="👕"
-            imagePreview={clothingImage}
+            imagePreview={clothingImage?.preview || null}
             onUpload={(file) => {
               const reader = new FileReader();
-              reader.onload = (e) =>
-                setClothingImage(e.target?.result as string);
+              reader.onload = (e) => {
+                setClothingImage({ file, preview: e.target?.result as string });
+              };
               reader.readAsDataURL(file);
             }}
-            onRemove={() => setClothingImage(null)}
+            onRemove={() => {
+              setClothingImage(null);
+              handleReset();
+            }}
           />
         </div>
 
-        {/* 生成按钮 - 居中 */}
+        {/* 生成按钮 */}
         <div className="flex justify-center mb-8">
           <GenerateButton
             isReady={isReady}
             isGenerating={isGenerating}
-            hasResult={!!resultImage}
+            hasResult={stage === "done"}
             onGenerate={handleGenerate}
             onRegenerate={handleGenerate}
+            onCancel={handleCancel}
+            label={getButtonLabel()}
           />
         </div>
 
@@ -113,10 +169,12 @@ export default function Home() {
         <div className="max-w-md mx-auto">
           <ResultDisplay
             resultImage={resultImage}
+            personImage={personImage?.preview || null}
             isLoading={isGenerating}
             error={error}
             onDownload={handleDownload}
             onRetry={handleGenerate}
+            stage={stage}
           />
         </div>
 
