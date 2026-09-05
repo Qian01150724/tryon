@@ -1,5 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
+import { HistoryItem } from "@/lib/history";
+import { HistoryPanel } from "@/components/HistoryPanel";
 
 interface ResultDisplayProps {
   resultImage?: string | null;
@@ -9,6 +11,12 @@ interface ResultDisplayProps {
   onDownload: () => void;
   onRetry: () => void;
   stage?: "idle" | "queued" | "processing" | "done" | "error";
+  history?: HistoryItem[];
+  isHistoryOpen?: boolean;
+  onHistoryToggle?: () => void;
+  onHistorySelect?: (item: HistoryItem) => void;
+  onHistoryDelete?: (id: string) => void;
+  selectedHistoryId?: string | null;
 }
 
 const LOADING_STEPS = [
@@ -29,6 +37,12 @@ export function ResultDisplay({
   onDownload,
   onRetry,
   stage = "idle",
+  history = [],
+  isHistoryOpen = false,
+  onHistoryToggle,
+  onHistorySelect,
+  onHistoryDelete,
+  selectedHistoryId = null,
 }: ResultDisplayProps) {
   const [stepIndex, setStepIndex] = useState(0);
   const [progress, setProgress] = useState(0);
@@ -169,12 +183,26 @@ export function ResultDisplay({
               ⬇️ 下载
             </button>
             <button
-              onClick={onRetry}
-              className="px-6 py-2 bg-gray-100 text-gray-700 rounded-full text-sm font-medium hover:bg-gray-200 transition-colors"
+              onClick={history.length > 0 ? onHistoryToggle : undefined}
+              disabled={history.length === 0}
+              className={`px-6 py-2 rounded-full text-sm font-medium transition-colors ${
+                history.length > 0
+                  ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  : 'bg-gray-100 text-gray-400 opacity-50 cursor-not-allowed'
+              }`}
             >
-              🔄 重新生成
+              🕐 历史记录 {history.length > 0 ? (isHistoryOpen ? '▲' : '▼') : ''}
             </button>
           </div>
+
+          {isHistoryOpen && onHistorySelect && onHistoryDelete && (
+            <HistoryPanel
+              items={history}
+              selectedId={selectedHistoryId}
+              onSelect={onHistorySelect}
+              onDelete={onHistoryDelete}
+            />
+          )}
         </div>
 
         {/* 放大弹窗 */}

@@ -5,6 +5,7 @@ import { Header } from "@/components/Header";
 import { UploadZone } from "@/components/UploadZone";
 import { GenerateButton } from "@/components/GenerateButton";
 import { ResultDisplay } from "@/components/ResultDisplay";
+import { HistoryItem, loadHistory, addHistoryItem, deleteHistoryItem } from "@/lib/history";
 
 type Stage = "idle" | "queued" | "processing" | "done" | "error";
 
@@ -16,6 +17,13 @@ export default function Home() {
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
+
+  const [history, setHistory] = useState<HistoryItem[]>(() => {
+    if (typeof window === 'undefined') return [];
+    return loadHistory();
+  });
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const timedOutRef = useRef(false);
@@ -61,6 +69,8 @@ export default function Home() {
 
       setResultImage(data.resultImage);
       setStage("done");
+      setSelectedHistoryId(null);
+      addHistoryItem(data.resultImage, history).then(setHistory);
     } catch (err) {
       clearTimeout(timeoutId);
       if (err instanceof Error && err.name === "AbortError") {
@@ -96,6 +106,20 @@ export default function Home() {
     setResultImage(null);
     setStage("idle");
     setError(null);
+  };
+
+  const handleHistoryToggle = () => setIsHistoryOpen((prev) => !prev);
+
+  const handleHistorySelect = (item: HistoryItem) => {
+    setResultImage(item.thumbnail);
+    setSelectedHistoryId(item.id);
+  };
+
+  const handleHistoryDelete = (id: string) => {
+    const next = deleteHistoryItem(id, history);
+    setHistory(next);
+    if (selectedHistoryId === id) setSelectedHistoryId(null);
+    if (next.length === 0) setIsHistoryOpen(false);
   };
 
   const getButtonLabel = () => {
@@ -175,6 +199,12 @@ export default function Home() {
             onDownload={handleDownload}
             onRetry={handleGenerate}
             stage={stage}
+            history={history}
+            isHistoryOpen={isHistoryOpen}
+            onHistoryToggle={handleHistoryToggle}
+            onHistorySelect={handleHistorySelect}
+            onHistoryDelete={handleHistoryDelete}
+            selectedHistoryId={selectedHistoryId}
           />
         </div>
 
